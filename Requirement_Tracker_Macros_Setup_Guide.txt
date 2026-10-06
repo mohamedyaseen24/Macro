@@ -1,0 +1,494 @@
+=============================================================================
+REQUIREMENT TRACKER WORKBOOK - MACRO SETUP GUIDE
+=============================================================================
+This file contains TWO macros plus the full step-by-step instructions to
+install both. Everything you need is in this single document.
+
+  PART A: Change Tracker  -> logs who changed what, and when, to a hidden
+                              sheet, and live-stamps "Last Updated By/On"
+                              when the Status column changes.
+  PART B: Status Dashboard -> counts requirements by status, overall and
+                              quarter-wise, into a visible Dashboard sheet.
+
+Both are independent - you can install either one alone, or both together.
+=============================================================================
+
+
+=============================================================================
+STEP-BY-STEP IMPLEMENTATION
+=============================================================================
+
+STEP 1 - Save the workbook as macro-enabled
+--------------------------------------------
+  1. Open your requirement tracking workbook.
+  2. File -> Save As -> choose "Excel Macro-Enabled Workbook (*.xlsm)".
+  3. Keep this .xlsm as the file your team edits going forward (a plain
+     .xlsx cannot store macros).
+
+STEP 2 - Open the VBA editor
+------------------------------
+  1. Press Alt+F11 (or Developer tab -> Visual Basic).
+  2. If you don't see the Developer tab: File -> Options -> Customize
+     Ribbon -> check "Developer" -> OK.
+
+STEP 3 - Install Part A (Change Tracker) into ThisWorkbook
+-------------------------------------------------------------
+  1. In the VBE Project Explorer (left panel), double-click "ThisWorkbook"
+     under your workbook's VBAProject.
+  2. Delete any existing code in that window.
+  3. Copy everything between the ">>> PART A START" and "<<< PART A END"
+     markers below and paste it into the ThisWorkbook code window.
+
+STEP 4 - Install Part B (Status Dashboard) into a new Module
+-----------------------------------------------------------------
+  1. In the VBE: Insert menu -> Module (this creates "Module1").
+  2. Copy everything between the ">>> PART B START" and "<<< PART B END"
+     markers below and paste it into that new module.
+
+STEP 5 - Protect the VBA project (keeps the tracker hidden from others)
+----------------------------------------------------------------------------
+  1. In the VBE Project Explorer, right-click your VBAProject -> 
+     VBAProject Properties.
+  2. Go to the Protection tab -> check "Lock project for viewing" ->
+     enter and confirm a password -> OK.
+  3. Save and close the workbook, then reopen it for the password lock
+     to take effect.
+
+STEP 6 - Let the hidden log sheet get created
+-------------------------------------------------
+  1. Close the VBE (Alt+Q) and go back to Excel.
+  2. Close the workbook completely, then reopen it (this fires
+     Workbook_Open, which silently creates the very-hidden "ChangeLog"
+     sheet the first time).
+  3. Enable macros if Excel prompts you (Enable Content).
+
+STEP 7 - Add a button to run the Dashboard refresh
+-------------------------------------------------------
+  1. Developer tab -> Insert -> Button (Form Control).
+  2. Draw the button anywhere on any sheet (e.g. your main summary tab).
+  3. In the "Assign Macro" dialog that pops up, choose "RefreshDashboard"
+     -> OK.
+  4. Rename the button's caption to something like "Refresh Dashboard"
+     (right-click the button -> Edit Text).
+
+STEP 8 - Check your sheet headers match what the macros expect
+---------------------------------------------------------------------
+  Both macros look for exact (case-insensitive) column headers on row 1
+  of each requirement sheet:
+    - "Status"                      <- required by both macros
+    - "Last Updated By" / "Last Updated On"   <- optional, for Part A's
+                                                  live-stamp feature
+    - Any header containing the word "Date"   <- required by Part B for
+                                                  the quarter-wise table
+  If your sheets use different header names, rename them to match, or
+  tell me the actual names and I'll adjust the macro's search text.
+
+STEP 9 - Test it
+-------------------
+  1. Edit a cell in the Status column on any requirement sheet -> save.
+  2. Click your "Refresh Dashboard" button -> confirm the Dashboard sheet
+     shows updated counts.
+  3. (Optional, to confirm logging works) In the VBE Immediate Window
+     (Ctrl+G), type:
+         ThisWorkbook.Worksheets("ChangeLog").Visible = True
+     press Enter, then look at the ChangeLog sheet in Excel to see your
+     logged edit. Afterwards, re-hide it the same way with:
+         ThisWorkbook.Worksheets("ChangeLog").Visible = xlSheetVeryHidden
+
+STEP 10 - Roll it out to the team
+--------------------------------------
+  1. Upload the .xlsm to the same SharePoint location the old file lived in.
+  2. Ask teammates to open it in DESKTOP Excel (not the browser) and turn
+     AutoSave OFF while editing, saving manually with Ctrl+S instead.
+     (Browser-based editing and live AutoSave co-authoring are NOT
+     reliably tracked by VBA - see the note at the bottom of this file.)
+
+=============================================================================
+PART A: CHANGE TRACKER  ->  paste into the "ThisWorkbook" code window
+=============================================================================
+>>> PART A START
+
+Option Explicit
+
+Private CachedValue As Variant
+Private CachedAddress As String
+Private CachedSheet As String
+
+Private Const LOG_SHEET_NAME As String = "ChangeLog"
+
+'--- Fires once when the workbook is opened ---------------------------
+Private Sub Workbook_Open()
+    EnsureLogSheetExists
+End Sub
+
+'--- Caches the value BEFORE an edit happens (fires on cell selection) -
+Private Sub Workbook_SheetSelectionChange(ByVal Sh As Object, ByVal Target As Range)
+    If Target.Cells.Count = 1 Then
+        CachedValue = Target.Value
+        CachedAddress = Target.Address(False, False)
+        CachedSheet = Sh.Name
+    Else
+        CachedValue = Empty
+        CachedAddress = ""
+        CachedSheet = ""
+    End If
+End Sub
+
+'--- Fires AFTER an edit is committed -----------------------------------
+Private Sub Workbook_SheetChange(ByVal Sh As Object, ByVal Target As Range)
+
+    Dim logWs As Worksheet
+    Dim nextRow As Long
+    Dim cell As Range
+    Dim oldVal As Variant
+    Dim statusCol As Long
+
+    On Error GoTo CleanFail
+    Application.EnableEvents = False
+
+    Set logWs = ThisWorkbook.Worksheets(LOG_SHEET_NAME)
+    statusCol = GetStatusColumn(Sh)
+
+    For Each cell In Target.Cells
+
+        If CachedSheet = Sh.Name And CachedAddress = cell.Address(False, False) Then
+            oldVal = CachedValue
+        Else
+            oldVal = "(unknown - multi-cell edit)"
+        End If
+
+        nextRow = logWs.Cells(logWs.Rows.Count, 1).End(xlUp).Row + 1
+        logWs.Cells(nextRow, 1).Value = Now
+        logWs.Cells(nextRow, 2).Value = Environ("USERNAME")
+        logWs.Cells(nextRow, 3).Value = Sh.Name
+        logWs.Cells(nextRow, 4).Value = cell.Address(False, False)
+        logWs.Cells(nextRow, 5).Value = oldVal
+        logWs.Cells(nextRow, 6).Value = cell.Value
+
+        If statusCol > 0 And cell.Column = statusCol Then
+            logWs.Cells(nextRow, 7).Value = "STATUS CHANGE"
+            StampStatusChange Sh, cell.Row, statusCol
+        End If
+
+    Next cell
+
+CleanFail:
+    Application.EnableEvents = True
+End Sub
+
+'--- Finds the "Status" column on the sheet by its header text ----------
+Private Function GetStatusColumn(ByVal Sh As Object) As Long
+    Dim headerRow As Range
+    Dim c As Range
+    On Error Resume Next
+    Set headerRow = Sh.Rows(1)
+    For Each c In headerRow.Cells
+        If c.Value = "" Then Exit For
+        If UCase(Trim(c.Value)) = "STATUS" Then
+            GetStatusColumn = c.Column
+            Exit Function
+        End If
+    Next c
+    GetStatusColumn = 0
+End Function
+
+'--- Writes "Last Updated By / On" next to the status cell, if those ----
+'--- header columns exist on the sheet -----------------------------------
+Private Sub StampStatusChange(ByVal Sh As Object, ByVal rowNum As Long, ByVal statusCol As Long)
+    Dim byCol As Long, onCol As Long
+    byCol = FindHeaderColumn(Sh, "Last Updated By")
+    onCol = FindHeaderColumn(Sh, "Last Updated On")
+    If byCol > 0 Then Sh.Cells(rowNum, byCol).Value = Environ("USERNAME")
+    If onCol > 0 Then Sh.Cells(rowNum, onCol).Value = Now
+End Sub
+
+Private Function FindHeaderColumn(ByVal Sh As Object, ByVal headerText As String) As Long
+    Dim c As Range
+    For Each c In Sh.Rows(1).Cells
+        If c.Value = "" Then Exit For
+        If UCase(Trim(c.Value)) = UCase(headerText) Then
+            FindHeaderColumn = c.Column
+            Exit Function
+        End If
+    Next c
+    FindHeaderColumn = 0
+End Function
+
+'--- Creates the hidden log sheet once, with headers, and VERY hides it -
+Private Sub EnsureLogSheetExists()
+    Dim ws As Worksheet
+    Dim exists As Boolean
+    Dim s As Worksheet
+
+    For Each s In ThisWorkbook.Worksheets
+        If s.Name = LOG_SHEET_NAME Then
+            exists = True
+            Exit For
+        End If
+    Next s
+
+    If Not exists Then
+        Application.ScreenUpdating = False
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        ws.Name = LOG_SHEET_NAME
+        ws.Range("A1:G1").Value = Array("Timestamp", "User", "Sheet", "Cell", "Old Value", "New Value", "Note")
+        ws.Columns("A:G").AutoFit
+        ws.Visible = xlSheetVeryHidden
+        Application.ScreenUpdating = True
+    Else
+        ThisWorkbook.Worksheets(LOG_SHEET_NAME).Visible = xlSheetVeryHidden
+    End If
+End Sub
+
+<<< PART A END
+=============================================================================
+
+
+=============================================================================
+PART B: STATUS DASHBOARD  ->  paste into a new standard Module
+=============================================================================
+>>> PART B START
+
+Option Explicit
+
+Sub RefreshDashboard()
+
+    Dim ws As Worksheet
+    Dim statusCol As Long, dateCol As Long
+    Dim totals As Object, quarterStatus As Object
+    Dim lastRow As Long, r As Long
+    Dim statusVal As String, qKey As String, qLabel As String
+    Dim dt As Variant
+
+    Set totals = CreateObject("Scripting.Dictionary")
+    Set quarterStatus = CreateObject("Scripting.Dictionary")
+
+    Dim statuses As Variant
+    statuses = Array("OPEN", "CLOSED", "IDENTIFIED", "HOLD", "SHELVED")
+
+    Dim st As Variant
+    For Each st In statuses
+        totals(CStr(st)) = 0
+    Next st
+
+    Application.ScreenUpdating = False
+
+    For Each ws In ThisWorkbook.Worksheets
+        If Not IsExcludedSheet(ws.Name) And ws.Visible = xlSheetVisible Then
+
+            statusCol = FindHeaderColumn(ws, "Status")
+            dateCol = FindDateColumn(ws)
+
+            If statusCol > 0 Then
+                lastRow = ws.Cells(ws.Rows.Count, statusCol).End(xlUp).Row
+
+                For r = 2 To lastRow
+                    statusVal = UCase(Trim(CStr(ws.Cells(r, statusCol).Value)))
+                    If statusVal <> "" Then
+
+                        If totals.Exists(statusVal) Then
+                            totals(statusVal) = totals(statusVal) + 1
+                        Else
+                            totals(statusVal) = 1
+                        End If
+
+                        If dateCol > 0 Then
+                            dt = ws.Cells(r, dateCol).Value
+                            If IsDate(dt) Then
+                                qLabel = "Q" & (Int((Month(dt) - 1) / 3) + 1) & "-" & Year(dt)
+                                qKey = qLabel & "|" & statusVal
+                                If quarterStatus.Exists(qKey) Then
+                                    quarterStatus(qKey) = quarterStatus(qKey) + 1
+                                Else
+                                    quarterStatus(qKey) = 1
+                                End If
+                            End If
+                        End If
+
+                    End If
+                Next r
+            End If
+        End If
+    Next ws
+
+    WriteDashboard totals, quarterStatus, statuses
+
+    Application.ScreenUpdating = True
+    MsgBox "Dashboard refreshed: " & Format(Now, "dd-mmm-yyyy hh:mm"), vbInformation
+
+End Sub
+
+'--- Sheets to skip when scanning for requirement data -------------------
+Private Function IsExcludedSheet(ByVal nm As String) As Boolean
+    IsExcludedSheet = (nm = "Dashboard" Or nm = "ChangeLog")
+End Function
+
+Private Function FindHeaderColumn(ByVal ws As Worksheet, ByVal headerText As String) As Long
+    Dim c As Range
+    For Each c In ws.Rows(1).Cells
+        If c.Value = "" Then Exit For
+        If UCase(Trim(c.Value)) = UCase(headerText) Then
+            FindHeaderColumn = c.Column
+            Exit Function
+        End If
+    Next c
+    FindHeaderColumn = 0
+End Function
+
+Private Function FindDateColumn(ByVal ws As Worksheet) As Long
+    Dim c As Range
+    For Each c In ws.Rows(1).Cells
+        If c.Value = "" Then Exit For
+        If InStr(1, UCase(Trim(c.Value)), "DATE") > 0 Then
+            FindDateColumn = c.Column
+            Exit Function
+        End If
+    Next c
+    FindDateColumn = 0
+End Function
+
+'--- Writes the summary + quarter-wise tables to the Dashboard sheet -----
+Private Sub WriteDashboard(ByVal totals As Object, ByVal quarterStatus As Object, ByVal statuses As Variant)
+
+    Dim dash As Worksheet
+    Dim rowIdx As Long, grandTotal As Long
+    Dim st As Variant
+
+    If Not SheetExists("Dashboard") Then
+        Set dash = ThisWorkbook.Worksheets.Add(Before:=ThisWorkbook.Sheets(1))
+        dash.Name = "Dashboard"
+    Else
+        Set dash = ThisWorkbook.Worksheets("Dashboard")
+        dash.Cells.Clear
+    End If
+
+    ' --- Overall totals ---
+    dash.Range("A1").Value = "Overall Requirement Status Summary"
+    dash.Range("A1").Font.Bold = True
+    dash.Range("A1").Font.Size = 14
+
+    dash.Range("A3").Value = "Status"
+    dash.Range("B3").Value = "Count"
+    dash.Range("A3:B3").Font.Bold = True
+
+    rowIdx = 4
+    grandTotal = 0
+    For Each st In statuses
+        dash.Cells(rowIdx, 1).Value = st
+        dash.Cells(rowIdx, 2).Value = IIf(totals.Exists(CStr(st)), totals(CStr(st)), 0)
+        grandTotal = grandTotal + dash.Cells(rowIdx, 2).Value
+        rowIdx = rowIdx + 1
+    Next st
+    dash.Cells(rowIdx, 1).Value = "TOTAL"
+    dash.Cells(rowIdx, 1).Font.Bold = True
+    dash.Cells(rowIdx, 2).Value = grandTotal
+    dash.Cells(rowIdx, 2).Font.Bold = True
+
+    ' --- Quarter-wise breakdown ---
+    Dim qStartRow As Long, hdrRow As Long, colIdx As Long
+    qStartRow = rowIdx + 3
+    dash.Cells(qStartRow, 1).Value = "Quarter-wise Status Breakdown"
+    dash.Cells(qStartRow, 1).Font.Bold = True
+    dash.Cells(qStartRow, 1).Font.Size = 14
+
+    hdrRow = qStartRow + 2
+    dash.Cells(hdrRow, 1).Value = "Quarter"
+    colIdx = 2
+    For Each st In statuses
+        dash.Cells(hdrRow, colIdx).Value = st
+        colIdx = colIdx + 1
+    Next st
+    dash.Cells(hdrRow, colIdx).Value = "Total"
+    dash.Range(dash.Cells(hdrRow, 1), dash.Cells(hdrRow, colIdx)).Font.Bold = True
+
+    Dim quarters As Object
+    Set quarters = CreateObject("Scripting.Dictionary")
+    Dim key As Variant, parts() As String
+    For Each key In quarterStatus.Keys
+        parts = Split(CStr(key), "|")
+        If Not quarters.Exists(parts(0)) Then quarters(parts(0)) = True
+    Next key
+
+    Dim n As Long
+    n = quarters.Count
+    If n > 0 Then
+        Dim qArr() As String
+        ReDim qArr(0 To n - 1)
+        Dim i As Long
+        i = 0
+        For Each key In quarters.Keys
+            qArr(i) = CStr(key)
+            i = i + 1
+        Next key
+        SortQuarters qArr
+
+        Dim qr As Long, rowTotal As Long, cnt As Long
+        Dim q As Variant
+        qr = hdrRow + 1
+        For Each q In qArr
+            dash.Cells(qr, 1).Value = q
+            colIdx = 2
+            rowTotal = 0
+            For Each st In statuses
+                If quarterStatus.Exists(CStr(q) & "|" & CStr(st)) Then
+                    cnt = quarterStatus(CStr(q) & "|" & CStr(st))
+                Else
+                    cnt = 0
+                End If
+                dash.Cells(qr, colIdx).Value = cnt
+                rowTotal = rowTotal + cnt
+                colIdx = colIdx + 1
+            Next st
+            dash.Cells(qr, colIdx).Value = rowTotal
+            qr = qr + 1
+        Next q
+    Else
+        dash.Cells(hdrRow + 1, 1).Value = "(No date column found -- quarter breakdown unavailable)"
+    End If
+
+    dash.Columns("A:H").AutoFit
+    dash.Activate
+
+End Sub
+
+Private Function SheetExists(ByVal nm As String) As Boolean
+    Dim s As Worksheet
+    On Error Resume Next
+    Set s = ThisWorkbook.Worksheets(nm)
+    On Error GoTo 0
+    SheetExists = Not s Is Nothing
+End Function
+
+'--- Sorts quarter labels like "Q1-2026" chronologically ------------------
+Private Sub SortQuarters(ByRef arr() As String)
+    Dim i As Long, j As Long, tmp As String
+    For i = LBound(arr) To UBound(arr) - 1
+        For j = LBound(arr) To UBound(arr) - 1 - (i - LBound(arr))
+            If QuarterSortKey(arr(j)) > QuarterSortKey(arr(j + 1)) Then
+                tmp = arr(j)
+                arr(j) = arr(j + 1)
+                arr(j + 1) = tmp
+            End If
+        Next j
+    Next i
+End Sub
+
+Private Function QuarterSortKey(ByVal lbl As String) As Long
+    Dim parts() As String
+    parts = Split(lbl, "-")
+    QuarterSortKey = CLng(parts(1)) * 10 + CLng(Mid(parts(0), 2))
+End Function
+
+<<< PART B END
+=============================================================================
+
+
+=============================================================================
+IMPORTANT NOTE ON SHAREPOINT / CO-AUTHORING
+=============================================================================
+Part A (Change Tracker) reliably logs edits made in DESKTOP Excel with
+AutoSave turned OFF. It will NOT catch edits made in Excel for the web
+(browser), and is not a reliable real-time audit trail when several
+people are editing simultaneously with AutoSave ON. Ask your team to
+edit in desktop Excel, with AutoSave off, saving manually (Ctrl+S).
+=============================================================================
